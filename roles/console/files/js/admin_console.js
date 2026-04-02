@@ -1680,11 +1680,11 @@ function procJobStat(data)
     //var job_info = {};
 
     //job_info['job_no'] = entry[0];
-    html += "<td>";
+    html += '<td data-label="#">';
     html += '<input type="checkbox" id="' + statusJob.job_id + '"' + (isTerminal ? ' disabled' : '') + '>';
     html += '<span style="vertical-align: text-bottom;">&nbsp;&nbsp;' + statusJob.job_id + '</span>';
     html += "</td>";
-    html += '<td style="overflow: hidden; text-overflow: ellipsis">' + statusJob.job_command + "</td>";
+    html += '<td data-label="Command" style="overflow: hidden; text-overflow: ellipsis">' + statusJob.job_command + "</td>";
 
     var result = statusJob.job_output.replace(/(?:\r\n|\r|\n)/g, html_break); // change newline to BR
     // result = result.replace(html_break+html_break, html_break); // remove blank lines, but doesn't work
@@ -1697,12 +1697,12 @@ function procJobStat(data)
     idx = result.lastIndexOf(html_break);  // find 2nd to last newline
     var result_end = "";
     if (idx >= 0) result_end = result.substring(0,idx + html_break.length);
-    html += '<td> <div class = "statusJobResult">' + result + "</div></td>";
+    html += '<td data-label="Result"> <div class = "statusJobResult">' + result + "</div></td>";
 
-    html += "<td>" + statusJob.job_status + "</td>";
+    html += '<td data-label="Status">' + statusJob.job_status + "</td>";
 
     var elapsedStr = secondsToDuration(statusJob.elapsed_sec);
-    html += "<td>" + statusJob.create_datetime + '<BR>' + elapsedStr + "</td>";
+    html += '<td data-label="Sched/Elapsed">' + statusJob.create_datetime + '<BR>' + elapsedStr + "</td>";
 
     html += "</tr>";
 

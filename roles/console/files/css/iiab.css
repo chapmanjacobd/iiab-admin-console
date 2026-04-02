@@ -1,5 +1,17 @@
 @charset "UTF-8";
 
+/* Base mobile-friendly body styles */
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Smooth scrolling for better UX */
+html {
+  scroll-behavior: smooth;
+}
+
 /* Override Bootstrap 3 */
 
 .adm-cons-page-header {
@@ -363,4 +375,446 @@ text-align: center;
   width: 65%;
   right: 10px;
   height: 500px;
+}
+
+/* ========================================
+   MOBILE RESPONSIVE STYLES
+   ======================================== */
+
+/* Base mobile improvements */
+@media screen and (max-width: 768px) {
+  /* Make page header responsive */
+  .adm-cons-page-header {
+    font-size: 24px;
+    padding-top: 8px;
+  }
+  
+  /* Responsive typography */
+  h1 {
+    font-size: 22px;
+  }
+  
+  h2 {
+    font-size: 20px;
+  }
+  
+  h3 {
+    font-size: 18px;
+  }
+  
+  p {
+    font-size: 14px;
+  }
+  
+  /* Make top navigation scrollable horizontally */
+  #iiab-top-nav {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
+  }
+  
+  /* Add gradient to indicate scrollable content */
+  #iiab-top-nav::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 30px;
+    height: 100%;
+    background: linear-gradient(to right, rgba(229, 207, 135, 0), rgba(229, 207, 135, 1));
+    pointer-events: none;
+    display: none;
+  }
+  
+  #iiab-top-nav:not(:last-child)::after {
+    display: block;
+  }
+  
+  #iiab-top-nav .nav-tabs {
+    white-space: nowrap;
+    min-width: max-content;
+    padding: 0 10px;
+    border-bottom: 1px solid #ddd;
+  }
+  
+  #iiab-top-nav .nav-tabs li {
+    display: inline-block;
+    float: none;
+  }
+  
+  /* Stack columns vertically on mobile */
+  .col-md-3, .col-md-9 {
+    width: 100%;
+    float: none;
+  }
+  
+  .iiab-left-nav {
+    background: #CFE8BE;
+    margin-bottom: 20px;
+    padding: 10px;
+  }
+  
+  /* Make action buttons full width on mobile */
+  .action-buttons {
+    width: 100%;
+    margin-bottom: 1em;
+    margin-top: 0.5em;
+  }
+  
+  .action-buttons button {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 0.5em;
+    padding: 12px;
+    font-size: 16px;
+  }
+  
+  .pane-buttons {
+    width: 100%;
+  }
+  
+  /* Make forms more touch-friendly */
+  .form-control {
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 10px;
+  }
+  
+  .form-group {
+    margin-bottom: 15px;
+  }
+  
+  label {
+    font-size: 14px;
+    margin-bottom: 5px;
+  }
+  
+  /* Make buttons easier to tap */
+  .btn {
+    min-height: 44px; /* Apple's recommended touch target size */
+    min-width: 44px;
+    padding: 12px 16px;
+  }
+  
+  .btn-lg {
+    padding: 14px 20px;
+    font-size: 18px;
+  }
+  
+  /* Responsive modals */
+  .modal.modal-wide .modal-dialog {
+    width: 95%;
+    margin: 10px;
+  }
+  
+  .modal-dialog {
+    margin: 10px;
+  }
+  
+  .modal-body {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+  }
+  
+  /* Help tip responsive */
+  #help-tip {
+    width: 90%;
+    height: auto;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 15px;
+  }
+  
+  #help-tip h1 {
+    font-size: 22px;
+  }
+  
+  #help-tip p {
+    font-size: 16px;
+  }
+  
+  /* Content items responsive */
+  .content-item {
+    flex-direction: column;
+    padding: 8px;
+  }
+  
+  .content-icon {
+    width: 100%;
+    height: auto;
+    padding: 5px 0;
+  }
+  
+  .content-item img {
+    max-width: 100%;
+    height: auto;
+  }
+  
+  .content-cell {
+    width: 100%;
+    padding: 5px 0;
+  }
+  
+  .content-item-title {
+    font-size: 1.2em;
+  }
+  
+  /* ZIM descriptions responsive */
+  .zim-desc {
+    display: block;
+    width: 100%;
+    white-space: normal;
+    margin-bottom: 5px;
+  }
+  
+  /* Map container responsive */
+  .map-container {
+    width: 100%;
+    float: none;
+    height: 300px;
+    margin-top: 10px;
+  }
+  
+  /* Table responsiveness */
+  .jobTable {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  
+  /* Internet access router selection */
+  #internetAccessRouterSelection {
+    overflow-x: auto;
+  }
+  
+  /* Adjust spacing for mobile */
+  .row-fluid {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  
+  .col-xs-4, .col-xs-8 {
+    width: 100%;
+    float: none;
+  }
+}
+
+/* Extra small devices (phones, less than 480px) */
+@media screen and (max-width: 480px) {
+  .adm-cons-page-header {
+    font-size: 20px;
+    padding-top: 6px;
+  }
+  
+  h1 {
+    font-size: 20px;
+  }
+  
+  h2 {
+    font-size: 18px;
+  }
+  
+  /* Smaller navigation tabs */
+  #iiab-top-nav .nav-tabs > li > a {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  
+  /* Compact action buttons */
+  .action-buttons button {
+    padding: 10px;
+    font-size: 15px;
+  }
+  
+  /* Reduce modal width */
+  .modal-dialog {
+    width: auto;
+    margin: 5px;
+  }
+  
+  /* Smaller help tip */
+  #help-tip {
+    padding: 10px;
+  }
+  
+  #help-tip h1 {
+    font-size: 18px;
+  }
+  
+  #help-tip p {
+    font-size: 14px;
+  }
+}
+
+/* Landscape orientation on mobile */
+@media screen and (max-width: 768px) and (orientation: landscape) {
+  .map-container {
+    height: 250px;
+  }
+  
+  .modal-body {
+    max-height: calc(100vh - 150px);
+  }
+}
+
+/* Touch-friendly improvements for all screen sizes */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger touch targets */
+  .nav-tabs > li > a {
+    padding: 12px 16px;
+    min-height: 44px;
+  }
+  
+  .action-buttons button {
+    min-height: 48px;
+  }
+  
+  /* Remove hover effects that don't work on touch */
+  .zim-desc:hover {
+    font-weight: normal;
+  }
+  
+  .select-menu-icon:hover {
+    transform: none;
+  }
+}
+
+/* Custom scrollbar for webkit browsers (mobile) */
+@media screen and (max-width: 768px) {
+  #iiab-top-nav::-webkit-scrollbar {
+    height: 4px;
+  }
+  
+  #iiab-top-nav::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.3);
+  }
+  
+  #iiab-top-nav::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 2px;
+  }
+  
+  #iiab-top-nav::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Additional form improvements for mobile */
+@media screen and (max-width: 768px) {
+  /* Stack form columns vertically */
+  .form-horizontal .form-group .col-sm-4,
+  .form-horizontal .form-group .col-md-3 {
+    width: 100%;
+    float: none;
+    margin-bottom: 10px;
+  }
+  
+  .form-horizontal .form-group {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  
+  /* Make labels full width */
+  .form-horizontal label {
+    width: 100%;
+    margin-bottom: 5px;
+  }
+  
+  /* Adjust radio and checkbox layouts */
+  .radio label,
+  .checkbox label {
+    padding-left: 20px;
+    font-size: 14px;
+  }
+  
+  .radio input[type="radio"],
+  .checkbox input[type="checkbox"] {
+    margin-left: -20px;
+    width: 20px;
+    height: 20px;
+  }
+  
+  /* Make textareas mobile-friendly */
+  textarea.form-control {
+    min-height: 150px;
+    font-size: 14px;
+  }
+  
+  /* Improve button layouts in utility panes */
+  .pane-buttons {
+    width: 100%;
+    margin-bottom: 1em;
+  }
+  
+  /* Stack flex button containers on mobile */
+  .row .col-sm-12 [style*="display:flex"] {
+    flex-direction: column;
+    gap: 10px !important;
+  }
+  
+  .row .col-sm-12 [style*="display:flex"] > div {
+    width: 100%;
+  }
+  
+  /* Make job status table more readable */
+  .jobTable thead {
+    display: none;
+  }
+  
+  .jobTable tbody tr {
+    display: block;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    padding: 10px;
+    background: #f9f9f9;
+  }
+  
+  .jobTable tbody td {
+    display: block;
+    text-align: right;
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+  }
+  
+  .jobTable tbody td:before {
+    content: attr(data-label);
+    float: left;
+    font-weight: bold;
+    text-transform: uppercase;
+  }
+  
+  /* Status job result overflow */
+  .statusJobResult {
+    max-height: 6em;
+  }
+  
+  /* Improve discovered network display */
+  #discoveredNetwork {
+    font-size: 13px;
+    background: #f5f5f5;
+    padding: 10px;
+    border-radius: 4px;
+  }
+}
+
+/* Print styles - useful for mobile users printing to PDF */
+@media print {
+  #iiab-top-nav,
+  .iiab-left-nav,
+  .action-buttons,
+  .pane-buttons,
+  .modal {
+    display: none !important;
+  }
+  
+  .col-md-9 {
+    width: 100% !important;
+    float: none !important;
+  }
+  
+  .tab-pane {
+    display: block !important;
+    page-break-inside: avoid;
+  }
 }
