@@ -497,14 +497,14 @@ function clearManContSelections(dev, reset=false){
 }
 
 function refreshAllContentPanels() {
-	$.when(getDownloadList(), getOer2goStat(), getZimStat(), getExternalDevInfo(), getOsmVectStat())
-	.done(renderZimInstalledList, renderOer2goInstalledList, renderExternalList, renderRegionList, refreshDiskSpace);
+	$.when(getDownloadList(), getOer2goStat(), getZimStat(), getExternalDevInfo(), getOsmVectStat(), getSyncwebStat())
+	.done(renderZimInstalledList, renderOer2goInstalledList, renderExternalList, renderRegionList, renderSyncwebInstalledList, refreshDiskSpace);
 }
 
 function refreshAllInstalledList() {
   console.log('in refreshAllInstalledList');
-	$.when(getDownloadList(), getOer2goStat(), getZimStat())
-	.done(renderZimInstalledList, renderOer2goInstalledList, refreshDiskSpace);
+	$.when(getDownloadList(), getOer2goStat(), getZimStat(), getSyncwebStat())
+	.done(renderZimInstalledList, renderOer2goInstalledList, renderSyncwebInstalledList, refreshDiskSpace);
 }
 
 function refreshExternalList() {
@@ -550,7 +550,7 @@ function delContent(device) {
   delArgs['device'] = device;
   delArgs['content'] = {};
 
-  for (contentType of ['zims', 'modules']){
+  for (contentType of ['zims', 'modules', 'syncweb']){
     delArgs['content'][contentType] = getRmList(device, contentType);
   }
 
@@ -658,6 +658,8 @@ function getRmCopyListParams(device, mod_type){
 		params.selectorId += "ZimModules";
   else if (mod_type == "modules")
     params.selectorId += "Oer2goModules";
+  else if (mod_type == "syncweb")
+    params.selectorId += "SyncwebPkgs";
   return params;
 }
 

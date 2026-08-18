@@ -450,6 +450,10 @@ function instContentButtonsEvents() {
     getOer2goCatalog();
   });
 
+  $("#GET-SYNCWEB-CATALOGUE").click(function(){
+    getSyncwebCatalog();
+  });
+
   $("#MK-PRESET").click(function(){
     var presetName = $("#mkPresetName").val().trim();
     var title = $("#mkPresetTitle").val().trim();

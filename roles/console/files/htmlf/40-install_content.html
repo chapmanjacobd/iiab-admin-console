@@ -19,6 +19,7 @@
         <li><a href="#instConZims" call-after="checkKiwixCatalogDate">Get ZIM Files from Kiwix</a></li>
         <li><a href="#instConUpgradeZims" call-after="getUpgradeableZimsList">Upgrade ZIM Files</a></li>
         <li><a href="#instConOer2go" call-after="oer2goMenuOption">Get OER2Go(RACHEL) Modules</a></li>
+        <li><a href="#instConSyncweb" call-after="syncwebInit">Get Syncweb Packages</a></li>
         <li><a href="#instOsmRegion" call-after="renderRegionMap">Get Map Regions</a></li>
         <li><a href="#instOsmAddons" call-after="renderAddonsMap">Get Map Addons</a></li>
         <li><a href="#instManageContent" call-after="manageContentInit">Manage Content</a></li>
@@ -34,6 +35,7 @@
         <button id="MAKE-KIWIX-LIB" type="button" class="btn btn-lg btn-success">Reindex Kiwix Content</button>
         <button id="KIWIX-LIB-REFRESH" type="button" class="btn btn-lg btn-success">Refresh Kiwix Catalog</button>
         <button id="OER2GO-CAT-REFRESH" type="button" class="btn btn-lg btn-success">Refresh OER2Go Catalog</button>
+        <button id="GET-SYNCWEB-CATALOGUE" type="button" class="btn btn-lg btn-success">Refresh Syncweb Catalog</button>
       </div>
     </div> <!-- left column -->
     <div class="col-md-9">
@@ -138,6 +140,30 @@
 
           <div id="Oer2goDownload"> </div>
         </div> <!--  End instConOer2go Submenu Option Pane -->
+
+        <div class="tab-pane" id="instConSyncweb">
+          <h2>Syncweb Packages</h2>
+          <p>Browse and install content packages shared by the IIAB community
+             via the P2P syncweb network. Packages are automatically discovered
+             from approved publishers.</p>
+          <div class="row">
+            <div class="col-sm-3">
+              <button type="button" class="btn btn-primary btn-lg"
+                      id="GET-SYNCWEB-CAT" onclick="getSyncwebCatalog()">Refresh Package List</button>
+            </div>
+            <div class="col-sm-4">
+              <span id="syncwebDiskSpace">Disk Space: </span>
+            </div>
+            <div class="col-sm-2">
+              <button id="INST-SYNCWEB" type="button" class="btn btn-lg btn-primary" onclick="instSyncwebPkgs()" disabled>
+                Install Selected
+              </button>
+            </div>
+          </div>
+          <div id="syncwebLanguageFilter">
+          </div>
+          <div id="SyncwebPackageList"></div>
+        </div>
 
         <div class="tab-pane" id="instOsmRegion">
           <!-- Start instOsmRegion Submenu Option Pane -->
@@ -259,6 +285,12 @@
                     <div class="col-sm-12">
                       <h3>Installed OER2Go(RACHEL) Modules: </h3>
                       <div id="installedOer2goModules"> </div>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="col-sm-12">
+                      <h3>Installed Syncweb Packages: </h3>
+                      <div id="installedSyncwebPkgs"></div>
                     </div>
                   </div>
                   <div class="row">

@@ -131,6 +131,7 @@ oer2go_wip = {}
 oer2go_installed = []
 osm_vect_installed = []
 maps_wip = {}
+syncweb_wip = {}
 jobs_requested = {}
 jobs_to_restart = {}
 jobs_to_cancel = {}
@@ -485,6 +486,7 @@ def add_wip(job_info):
     global zims_wip
     global oer2go_wip
     global maps_wip
+    global syncweb_wip
 
     dest = "internal"
     source = "kiwix"
@@ -532,10 +534,19 @@ def add_wip(job_info):
         pass
         # radius = job_info['extra_vars']['radius'] not much housekeeping to do
 
+    elif cmd in {"INST-SYNCWEB-PKG"}:
+        pkg_ticket = job_info['cmd_args']['ticket']
+        syncweb_wip[pkg_ticket] = {
+            "cmd": cmd,
+            "action": "DOWNLOAD",
+            "source": "syncweb"
+        }
+
 def remove_wip(job_info):
     global zims_wip
     global oer2go_wip
     global maps_wip
+    global syncweb_wip
 
     #print job_info
     #print "in remove_wip"
@@ -546,6 +557,8 @@ def remove_wip(job_info):
         oer2go_wip.pop(job_info['cmd_args']['moddir'], None)
     elif job_info['cmd'] in {"INST-OSM-VECT-SET"}:
         maps_wip.pop(job_info['cmd_args']['osm_vect_id'], None)
+    elif job_info['cmd'] in ["INST-SYNCWEB-PKG"]:
+        syncweb_wip.pop(job_info['cmd_args']['ticket'], None)
 
 def start_job(job_id, job_info, status='STARTED'):
     global running_job_count
@@ -788,6 +801,10 @@ def cmd_handler(cmd_msg):
         "DEL-DOWNLOADS": {"funct": del_downloads, "inet_req": False},
         "DEL-MODULES": {"funct": del_modules, "inet_req": False},
         "DEL-CONTENT": {"funct": del_content, "inet_req": False},
+        "GET-SYNCWEB-CAT": {"funct": get_syncweb_catalog, "inet_req": True},
+        "GET-SYNCWEB-STAT": {"funct": get_syncweb_stat, "inet_req": False},
+        "INST-SYNCWEB-PKG": {"funct": install_syncweb_pkg, "inet_req": True},
+        "DEL-SYNCWEB-PKG": {"funct": del_syncweb_pkg, "inet_req": False},
         "GET-MENU-ITEM-DEF-LIST": {"funct": get_menu_item_def_list, "inet_req": False},
         "UPDATE-HOME-MENU": {"funct": update_home_menu, "inet_req": False},
         "SAVE-MENU-DEF": {"funct": save_menu_def, "inet_req": False},
@@ -1007,12 +1024,14 @@ def del_content(cmd_info): # includes zims
     content = cmd_info['cmd_args']['content']
 
     for content_type in content:
-        if content_type not in ["zims", "modules"]:
+        if content_type not in ["zims", "modules", "syncweb"]:
             return cmd_malformed(cmd_info['cmd'])
 
     for content_type in content:
         if content_type == "zims":
             target_dir = zim_dir
+        elif content_type == "syncweb":
+            target_dir = "/library/syncweb"
         else:
             target_dir = modules_dir
 
@@ -1027,7 +1046,7 @@ def del_content(cmd_info): # includes zims
                         os.remove(file)
 
                     # shutil.rmtree(target_dir + "index/" + mod + ".idx", ignore_errors=True) no index directories any more
-                else: # modules
+                else: # modules or syncweb
                     shutil.rmtree(target_dir + item)
             except:
                 # ignore for now but report
@@ -1110,6 +1129,65 @@ def del_modules(cmd_info): # includes zims
         resp = cmd_success(cmd_info['cmd'])
 
     return (resp)
+
+def get_syncweb_catalog(cmd_info):
+    timeout = cmd_info['cmd_args'].get('timeout_secs', 10)
+    channel = cmd_info['cmd_args'].get('channel', 'iiab-approved')
+
+    cmd = 'syncweb package search --channel ' + channel + ' --timeout ' + str(timeout) + ' --json'
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout + 5
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return cmd_success(cmd_info, data)
+        else:
+            return cmd_error(cmd=cmd_info['cmd'], msg=result.stderr)
+    except subprocess.TimeoutExpired:
+        return cmd_error(cmd=cmd_info['cmd'], msg='Syncweb catalog search timed out')
+    except Exception as e:
+        return cmd_error(cmd=cmd_info['cmd'], msg=str(e))
+
+def get_syncweb_stat(cmd_info):
+    cmd = 'syncweb package list --json'
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return json.dumps(data)
+        else:
+            return cmd_error(cmd=cmd_info['cmd'], msg=result.stderr)
+    except Exception as e:
+        return cmd_error(cmd=cmd_info['cmd'], msg=str(e))
+
+def install_syncweb_pkg(cmd_info):
+    ticket = cmd_info['cmd_args']['ticket']
+    target_dir = cmd_info['cmd_args'].get('target_dir', '/library/syncweb')
+    symlink_name = cmd_info['cmd_args'].get('symlink_name')
+
+    job_command = (
+        'syncweb package install ' + ticket + ' ' + target_dir + ' ' + symlink_name + ' --json'
+    )
+
+    resp = request_job(cmd_info=cmd_info, job_command=job_command, cmd_step_no=1, depend_on_job_id=-1, has_dependent="N")
+    return resp
+
+def del_syncweb_pkg(cmd_info):
+    collection_id = cmd_info['cmd_args']['collection_id']
+    cmd = 'syncweb package remove ' + collection_id
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            return cmd_success(cmd_info, {'collection_id': collection_id})
+        else:
+            return cmd_error(cmd=cmd_info['cmd'], msg=result.stderr)
+    except Exception as e:
+        return cmd_error(cmd=cmd_info['cmd'], msg=str(e))
 
 def run_command(command):
     args = shlex.split(command)
