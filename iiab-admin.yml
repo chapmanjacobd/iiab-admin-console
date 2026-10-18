@@ -47,6 +47,11 @@
     include_role:
       name: common
 
+  - name: syncweb
+    import_role:
+      name: syncweb
+    when: syncweb_install | default(false)
+
   - name: cmdsrv
     include_role:
       name: cmdsrv

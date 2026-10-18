@@ -40,6 +40,31 @@
       <!-- Start right column -->
       <div id="installContentOptions" class="tab-content">
         <!-- Start Container for Sub Menu Options Panes -->
+        <div id="syncwebPeerSource" class="alert alert-info" style="display:none">
+          <h2>From another IIAB</h2>
+          <p>
+            Use the configured read-only syncweb share ticket, or replace it with an alternate ticket,
+            then select the ZIMs or OER2Go modules you want below and fetch them without using HTTP.
+          </p>
+          <div class="form-inline">
+            <label for="SYNCWEB-TICKET">syncweb ticket:</label>
+            <input id="SYNCWEB-TICKET" type="text" class="form-control" size="64"
+              autocomplete="off" spellcheck="false" placeholder="Configured default or alternate ticket">
+            <button id="SYNCWEB-FETCH-CONTENT" type="button" class="btn btn-lg btn-primary">
+              Fetch Selected Content
+            </button>
+          </div>
+          <p class="help-block">
+            Each selected ZIM or module is fetched from its own named package
+            manifest, so the package manifest defines the files transferred.
+          </p>
+          <p class="help-block">
+            The source IIAB publishes one package for each ZIM and each OER2Go
+            module. Package names are derived from the catalog values, so the
+            selected catalog item determines its package automatically.
+          </p>
+        </div>
+
         <div class="tab-pane" id="instConStart">
           <!-- Start instConStart Submenu Option Pane -->
           <h2>Get Started</h2>

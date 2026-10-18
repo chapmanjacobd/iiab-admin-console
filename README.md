@@ -5,6 +5,7 @@
 1. https://github.com/iiab/iiab-admin-console/blob/master/docs/3.Console.md
 1. https://github.com/iiab/iiab-admin-console/blob/master/docs/4.JS-Menu.md
 1. https://github.com/iiab/iiab-admin-console/blob/master/docs/5.Content.md
+1. https://github.com/iiab/iiab-admin-console/blob/master/docs/6.Syncweb.md
 
 ## Additional Documentation
 

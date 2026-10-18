@@ -399,6 +399,43 @@ function instContentButtonsEvents() {
     make_button_disabled("#INST-MODS", false);
   });
 
+  $("#SYNCWEB-FETCH-CONTENT").click(function(){
+    var ticket = $("#SYNCWEB-TICKET").val().trim();
+    if (ticket == "" && (!adminConfig.syncweb_peer_ticket || adminConfig.syncweb_peer_ticket.trim() == "")){
+      alert("Enter a read-only syncweb ticket from another IIAB.");
+      return;
+    }
+
+    var zim_ids = [];
+    $("#ZimDownload input[type=checkbox]:checked").each(function(){
+      var installed = installedZimCatalog["INSTALLED"] || {};
+      var wip = installedZimCatalog["WIP"] || {};
+      if (!(this.name in installed) && !(this.name in wip))
+        zim_ids.push(this.name);
+    });
+    var module_ids = [];
+    $("#Oer2goDownload input[type=checkbox]:checked").each(function(){
+      if (oer2goInstalled.indexOf(this.name) < 0 && !(this.name in oer2goWip))
+        module_ids.push(this.name);
+    });
+
+    if (zim_ids.length + module_ids.length == 0){
+      alert("Select at least one ZIM or OER2Go module first.");
+      return;
+    }
+
+    var cmd_args = {
+      ticket: ticket,
+      zim_ids: zim_ids,
+      module_ids: module_ids
+    };
+    var command = "SYNCWEB-FETCH-CONTENT " + JSON.stringify(cmd_args);
+    sendCmdSrvCmd(command, genericCmdHandler, "SYNCWEB-FETCH-CONTENT", undefined, cmd_args);
+    getZimStat();
+    getOer2goStat();
+    alert("Selected content scheduled to be fetched from the other IIAB.\n\nPlease view Utilities->Display Job Status for the results.");
+  });
+
   consoleLog("adminConfig.osm_version " + adminConfig.osm_version);
 
   // Only support V2 of maps
@@ -856,7 +893,20 @@ function getAdminConfig (data)
   //alert ("in getAnsibleFacts");
   consoleLog(data);
   adminConfig = data;
+  updateSyncwebPeerSource();
   return true;
+}
+
+function updateSyncwebPeerSource()
+{
+  if (!$("#syncwebPeerSource").length)
+    return;
+  if (adminConfig.syncweb_installed === true && adminConfig.syncweb_enabled === true)
+    $("#syncwebPeerSource").show();
+  else
+    $("#syncwebPeerSource").hide();
+  if (!$("#SYNCWEB-TICKET").val() && typeof adminConfig.syncweb_peer_ticket === "string")
+    $("#SYNCWEB-TICKET").val(adminConfig.syncweb_peer_ticket);
 }
 
 function getAnsibleFacts (data)
@@ -2732,6 +2782,7 @@ function initGetHtml(){
 			}),
 			$.get('htmlf/40-install_content.html', function (data) {
 				$('#InstallContent').html(data);
+				updateSyncwebPeerSource();
 				instContentButtonsEvents();
 			}),
 			$.get('htmlf/50-edit_menus.html', function (data) { // this should be conditional on js_menu_install: True

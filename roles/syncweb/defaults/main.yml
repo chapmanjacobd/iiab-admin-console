@@ -1,0 +1,25 @@
+---
+syncweb_install: false
+syncweb_cargo_package: cargo
+syncweb_enabled: true
+syncweb_install_source: registry
+syncweb_crate: syncweb
+# cargo install ignores prereleases, and only prerelease versions of the
+# syncweb crate currently contain the real CLI -- so a version is required.
+# 0.1.1-alpha.12 is the first release whose `folders join` reads the ticket
+# from standard input ("-"), which keeps it out of /proc/<pid>/cmdline
+syncweb_version: 0.1.1-alpha.12
+syncweb_source: /opt/syncweb
+syncweb_cargo_path: "{{ syncweb_source }}/syncweb-cli"
+syncweb_install_root: /usr/local
+syncweb_binary: "{{ syncweb_install_root }}/bin/syncweb"
+syncweb_user: syncweb
+syncweb_group: syncweb
+syncweb_manage_user: true
+syncweb_home: /var/lib/syncweb
+syncweb_data_dir: "{{ syncweb_home }}/data"
+syncweb_staging_dir: "{{ syncweb_home }}/staging"
+syncweb_peer_ticket: ""
+syncweb_force_reinstall: false
+syncweb_media_listen: "127.0.0.1:9193"
+syncweb_start_extra_args: ""

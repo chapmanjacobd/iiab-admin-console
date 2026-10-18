@@ -1,0 +1,146 @@
+---
+- name: Validate syncweb installation source
+  ansible.builtin.assert:
+    that:
+      - syncweb_install_source in ['registry', 'local']
+    fail_msg: >-
+      syncweb_install_source must be either 'registry' or 'local'
+      (currently {{ syncweb_install_source }}).
+
+- name: Validate local syncweb Cargo package
+  ansible.builtin.stat:
+    path: "{{ syncweb_cargo_path }}"
+  register: syncweb_cargo_path_stat
+  when: syncweb_install_source == 'local'
+
+- name: Require an installable local syncweb Cargo package
+  ansible.builtin.assert:
+    that:
+      - syncweb_cargo_path_stat.stat.exists
+      - syncweb_cargo_path_stat.stat.isdir
+    fail_msg: >-
+      syncweb_cargo_path must be an existing directory on the target host
+      (currently {{ syncweb_cargo_path }}).
+  when: syncweb_install_source == 'local'
+
+- name: Install syncweb build dependencies
+  ansible.builtin.package:
+    name: "{{ syncweb_cargo_package }}"
+    state: present
+
+- name: Create syncweb group
+  ansible.builtin.group:
+    name: "{{ syncweb_group }}"
+    system: true
+  when: syncweb_manage_user
+
+- name: Create syncweb user
+  ansible.builtin.user:
+    name: "{{ syncweb_user }}"
+    group: "{{ syncweb_group }}"
+    home: "{{ syncweb_home }}"
+    create_home: false
+    system: true
+    shell: /usr/sbin/nologin
+  when: syncweb_manage_user
+
+- name: Create syncweb directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ syncweb_user }}"
+    group: "{{ syncweb_group }}"
+    mode: "0750"
+  loop:
+    - "{{ syncweb_home }}"
+    - "{{ syncweb_data_dir }}"
+    - "{{ syncweb_staging_dir }}"
+
+- name: Check installed syncweb version
+  ansible.builtin.command:
+    argv:
+      - "{{ syncweb_binary }}"
+      - --no-color
+      - --json
+      - version
+  register: syncweb_installed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not syncweb_force_reinstall
+
+- name: Set installed syncweb version
+  ansible.builtin.set_fact:
+    syncweb_current_version: >-
+      {{
+        (syncweb_installed_version.stdout | from_json).version
+        if syncweb_installed_version.rc == 0
+        else ''
+      }}
+  when: not syncweb_force_reinstall
+
+- name: Install syncweb from the published Cargo crate
+  ansible.builtin.command:
+    cmd: >-
+      cargo install --locked --force {{ syncweb_crate }}@{{ syncweb_version }}
+      --root {{ syncweb_install_root }}
+  when:
+    - syncweb_install_source == 'registry'
+    - not syncweb_force_reinstall
+    - syncweb_current_version != syncweb_version
+  notify: Restart syncweb
+
+- name: Reinstall syncweb from the published Cargo crate
+  ansible.builtin.command:
+    cmd: >-
+      cargo install --locked --force {{ syncweb_crate }}@{{ syncweb_version }}
+      --root {{ syncweb_install_root }}
+  when:
+    - syncweb_install_source == 'registry'
+    - syncweb_force_reinstall
+  notify: Restart syncweb
+
+- name: Install syncweb from the local Cargo source
+  ansible.builtin.command:
+    cmd: >-
+      cargo install --locked --force --path {{ syncweb_cargo_path }}
+      --root {{ syncweb_install_root }}
+  when:
+    - syncweb_install_source == 'local'
+    - not syncweb_force_reinstall
+    - syncweb_current_version != syncweb_version
+  notify: Restart syncweb
+
+- name: Reinstall syncweb from the local Cargo source
+  ansible.builtin.command:
+    cmd: >-
+      cargo install --locked --force --path {{ syncweb_cargo_path }}
+      --root {{ syncweb_install_root }}
+  when:
+    - syncweb_install_source == 'local'
+    - syncweb_force_reinstall
+  notify: Restart syncweb
+
+- name: Install syncweb systemd unit
+  ansible.builtin.template:
+    src: syncweb.service.j2
+    dest: /etc/systemd/system/syncweb.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart syncweb
+
+- name: Enable and start syncweb
+  ansible.builtin.systemd_service:
+    name: syncweb.service
+    daemon_reload: true
+    enabled: "{{ syncweb_enabled }}"
+    state: "{{ 'started' if syncweb_enabled else 'stopped' }}"
+
+# Record installation in IIAB's state file (convention, cf. the kiwix role),
+# so tooling that reads iiab_state.yml can see that syncweb is installed
+- name: "Add 'syncweb_installed: True' to {{ iiab_state_file }}"
+  ansible.builtin.lineinfile:
+    path: "{{ iiab_state_file }}"    # /etc/iiab/iiab_state.yml
+    regexp: '^syncweb_installed'
+    line: 'syncweb_installed: True'

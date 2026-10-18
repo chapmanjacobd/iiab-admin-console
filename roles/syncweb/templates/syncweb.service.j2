@@ -1,0 +1,20 @@
+[Unit]
+Description=syncweb delay-tolerant P2P folder synchronization
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ syncweb_user }}
+Group={{ syncweb_group }}
+WorkingDirectory={{ syncweb_home }}
+Environment=HOME={{ syncweb_home }}
+ExecStart={{ syncweb_binary }} --data-dir {{ syncweb_data_dir }} start --media-listen {{ syncweb_media_listen }}{% if syncweb_start_extra_args %} {{ syncweb_start_extra_args }}{% endif %}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

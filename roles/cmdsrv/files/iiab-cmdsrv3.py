@@ -104,6 +104,13 @@ vector_map_path = None
 vector_map_tiles_path = None
 osm_version = None
 modules_dir = None
+syncweb_binary = None
+syncweb_user = None
+syncweb_data_dir = None
+syncweb_staging_dir = None
+syncweb_peer_ticket = None
+syncweb_installed = None
+syncweb_enabled = None
 small_device_size = 525000 # bigger than anticipated boot partition
 js_menu_dir = None
 tailscale_login_url = 'https://controlplane.tailscale.com'
@@ -142,6 +149,8 @@ SENSITIVE_COMMANDS = ["CHGPW", "AUTHENTICATE", "CTL-HOTSPOT", "SET-WIFI-CONNECTI
 NO_LOG_COMMANDS = ["AUTHENTICATE"]
 ANSIBLE_COMMANDS = ["RUN-ANSIBLE", "RESET-NETWORK", "RUN-ANSIBLE-ROLES"]
 FULL_LOG_COMMANDS = ["RUN-ANSIBLE", "RESET-NETWORK", "RUN-ANSIBLE-ROLES"]
+
+
 SUPPLIED_PRESETS = {'en-school', 'es-school', 'fr-school', 'en-medical', 'en-school-256-base', 'en-starter', 'test'}  # hardcoded list, needs to be updated if presets added
 ansible_running_flag = False
 iiab_roles_status = {}
@@ -159,6 +168,7 @@ journal_log.addHandler(jhandler)
 # Locking
 lock = threading.Lock() # for updating global variables
 db_lock = threading.Lock() # for sqlite db concurrency
+syncweb_wip_lock = threading.RLock() # reserve syncweb content atomically
 
 # vars read from ansible vars directory
 # effective is composite where local takes precedence
@@ -423,7 +433,12 @@ def job_minder_thread(client_url, worker_control_url, context=None):
                 if job_id in jobs_to_cancel:
                     tprint (str(job_id) + ' cancelled.')
                     p = jobs_running[job_id]['subproc']
-                    p.send_signal(signal.SIGINT)
+                    signal_job_process(
+                        p.pid,
+                        jobs_running[job_id]['cmd'],
+                        signal.SIGINT,
+                        jobs_running[job_id].get('process_group'),
+                    )
                     t = 0
                     while t < 5:
                         rc = p.poll()
@@ -431,8 +446,18 @@ def job_minder_thread(client_url, worker_control_url, context=None):
                             break
                         time.sleep(1)
                         t += 1
-                    if rc == None:
-                        p.kill()
+                    if jobs_running[job_id]['cmd'] == 'SYNCWEB-FETCH-CONTENT' or p.poll() is None:
+                        signal_job_process(
+                            p.pid,
+                            jobs_running[job_id]['cmd'],
+                            signal.SIGKILL,
+                            jobs_running[job_id].get('process_group'),
+                        )
+                        p.wait()
+                    if jobs_running[job_id]['cmd'] == 'SYNCWEB-FETCH-CONTENT':
+                        cleanup_marker = syncweb_cleanup_marker_path(jobs_running[job_id])
+                        if cleanup_marker is not None:
+                            cleanup_syncweb_folder(cleanup_marker)
                     job_info = end_job(job_id, jobs_running[job_id], 'CANCELLED')
                     jobs_to_close.append(job_id)
                     upd_job_cancelled(job_id)
@@ -481,7 +506,20 @@ def job_minder_thread(client_url, worker_control_url, context=None):
     #context.term()
     #sys.exit()
 
+def oer2go_moddir(module_id):
+    """Return the catalog item's module directory, or the id if unknown."""
+    item = oer2go_catalog.get(module_id) if isinstance(oer2go_catalog, dict) else None
+    if isinstance(item, dict):
+        moddir = item.get('moddir')
+        if isinstance(moddir, str) and moddir:
+            return moddir
+    return module_id
+
 def add_wip(job_info):
+    with syncweb_wip_lock:
+        _add_wip(job_info)
+
+def _add_wip(job_info):
     global zims_wip
     global oer2go_wip
     global maps_wip
@@ -532,7 +570,239 @@ def add_wip(job_info):
         pass
         # radius = job_info['extra_vars']['radius'] not much housekeeping to do
 
+    elif cmd == "SYNCWEB-FETCH-CONTENT":
+        # mark every selected item as in progress so the console shows it and
+        # concurrent installs/fetches of the same items are rejected
+        for zim_id in job_info['cmd_args'].get('zim_ids', []):
+            zims_wip[zim_id] = {"cmd":cmd, "action":"DOWNLOAD", "dest":"internal", "source":"syncweb"}
+        for mod_id in job_info['cmd_args'].get('module_ids', []):
+            # key by moddir like INST-OER2GO-MOD and the console do
+            oer2go_wip[oer2go_moddir(mod_id)] = {"cmd":cmd, "action":"DOWNLOAD", "dest":"internal", "source":"syncweb"}
+
+
+def syncweb_wip_args(job_info, opt_args):
+    """Recover the syncweb job arguments needed after a command-server restart."""
+    persisted = opt_args.get('syncweb_wip')
+    persisted_ids = {'zim_ids': [], 'module_ids': []}
+    if isinstance(persisted, dict):
+        zim_ids = persisted.get('zim_ids', [])
+        module_ids = persisted.get('module_ids', [])
+        if (
+            isinstance(zim_ids, list)
+            and isinstance(module_ids, list)
+            and all(isinstance(item, str) for item in zim_ids + module_ids)
+        ):
+            persisted_ids = {'zim_ids': zim_ids, 'module_ids': module_ids}
+            ticket = persisted.get('ticket')
+            if isinstance(ticket, str) and ticket.strip():
+                return {
+                    'ticket': ticket,
+                    'zim_ids': zim_ids,
+                    'module_ids': module_ids,
+                }
+
+    # Jobs created before the ticket was persisted can still recover their
+    # arguments from the root-readable spec file while it survives.
+    try:
+        command_args = shlex.split(job_info.get('job_command', ''))
+        spec_path = command_args[command_args.index('--spec-file') + 1]
+        with open(spec_path) as spec_stream:
+            spec = json.load(spec_stream)
+    except (OSError, IndexError, ValueError, json.JSONDecodeError) as exc:
+        log(syslog.LOG_ERR, "Unable to recover syncweb WIP metadata: %s" % exc)
+        return {
+            'ticket': '',
+            'zim_ids': persisted_ids['zim_ids'],
+            'module_ids': persisted_ids['module_ids'],
+        }
+
+    zims = spec.get('zims', [])
+    modules = spec.get('modules', [])
+    if not isinstance(zims, list) or not isinstance(modules, list):
+        log(syslog.LOG_ERR, "Syncweb job spec has invalid WIP metadata.")
+        return {
+            'ticket': '',
+            'zim_ids': persisted_ids['zim_ids'],
+            'module_ids': persisted_ids['module_ids'],
+        }
+    zim_ids = [item.get('id') for item in zims if isinstance(item, dict) and isinstance(item.get('id'), str)]
+    module_ids = [item.get('id') for item in modules if isinstance(item, dict) and isinstance(item.get('id'), str)]
+    ticket = spec.get('ticket')
+    return {
+        'ticket': ticket.strip() if isinstance(ticket, str) else '',
+        'zim_ids': zim_ids,
+        'module_ids': module_ids,
+    }
+
+
+def write_syncweb_spec(cmd_rowid, spec):
+    spec_dir = '/run/iiab'
+    os.makedirs(spec_dir, mode=0o700, exist_ok=True)
+    spec_path = os.path.join(spec_dir, 'syncweb-fetch-%s.json' % cmd_rowid)
+    # Create the file 0600 from the start: it carries the ticket, and a
+    # default-umask create would briefly be world-readable.  An existing file
+    # keeps its mode through O_TRUNC, so chmod afterwards too.
+    fd = os.open(spec_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as spec_stream:
+        json.dump(spec, spec_stream)
+    os.chmod(spec_path, 0o600)
+    return spec_path
+
+
+def restore_syncweb_spec(job_info, opt_args):
+    """Recreate the runtime spec from restart metadata after a reboot."""
+    spec = opt_args.get('syncweb_spec')
+    if not isinstance(spec, dict):
+        return
+    try:
+        spec_path = write_syncweb_spec(job_info['cmd_rowid'], spec)
+        command_args = shlex.split(job_info.get('job_command', ''))
+        spec_arg = command_args.index('--spec-file') + 1
+        command_args[spec_arg] = spec_path
+        job_info['job_command'] = ' '.join(shlex.quote(arg) for arg in command_args)
+    except (OSError, IndexError, ValueError, TypeError) as exc:
+        log(syslog.LOG_ERR, "Unable to restore syncweb job spec: %s" % exc)
+
+
+def syncweb_cleanup_marker_path(job_info):
+    if job_info.get('cmd') != 'SYNCWEB-FETCH-CONTENT':
+        return None
+    try:
+        command_args = shlex.split(job_info.get('job_command', ''))
+        spec_path = command_args[command_args.index('--spec-file') + 1]
+    except (IndexError, ValueError):
+        return None
+    spec_name = os.path.basename(spec_path)
+    if (
+        os.path.dirname(spec_path) != '/run/iiab'
+        or not spec_name.startswith('syncweb-fetch-')
+        or not spec_name.endswith('.json')
+    ):
+        return None
+    return os.path.splitext(spec_path)[0] + '.folder'
+
+
+def cleanup_syncweb_folder(marker_path):
+    try:
+        with open(marker_path) as marker_stream:
+            folder_path = marker_stream.read().strip()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        log(syslog.LOG_ERR, "Unable to read syncweb cleanup marker %s: %s" % (marker_path, exc))
+        return False
+
+    try:
+        staging_root = os.path.realpath(syncweb_staging_dir)
+        folder = os.path.realpath(folder_path)
+        relative_folder = os.path.relpath(folder, staging_root)
+    except (TypeError, ValueError) as exc:
+        log(syslog.LOG_ERR, "Invalid syncweb cleanup marker %s: %s" % (marker_path, exc))
+        return False
+    relative_parts = relative_folder.split(os.sep)
+    if (
+        len(relative_parts) != 2
+        or not relative_parts[0].startswith('fetch-')
+        or relative_parts[1] != 'folder'
+    ):
+        log(syslog.LOG_ERR, "Refusing unexpected syncweb cleanup path: %s" % folder_path)
+        return False
+
+    if os.path.exists('/run/systemd/system'):
+        try:
+            service_active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", "syncweb.service"]
+            ).returncode == 0
+        except OSError as exc:
+            log(syslog.LOG_ERR, "Unable to check syncweb.service before cleanup: %s" % exc)
+            return False
+        if not service_active:
+            log(syslog.LOG_ERR, "syncweb.service is not running; retaining cleanup marker %s" % marker_path)
+            return False
+
+    if not isinstance(syncweb_binary, str) or not os.path.isfile(syncweb_binary):
+        log(syslog.LOG_ERR, "syncweb binary is unavailable; retaining cleanup marker %s" % marker_path)
+        return False
+    try:
+        owner = pwd.getpwnam(syncweb_user)
+        env = {key: value for key, value in os.environ.items() if key != "XDG_RUNTIME_DIR"}
+        env["HOME"] = os.path.dirname(syncweb_data_dir)
+        result = subprocess.run(
+            [
+                syncweb_binary,
+                "--data-dir",
+                syncweb_data_dir,
+                "--no-color",
+                "--json",
+                "folders",
+                "leave",
+                folder,
+            ],
+            check=False,
+            user=owner.pw_name,
+            group=owner.pw_gid,
+            extra_groups=[],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (KeyError, OSError, subprocess.SubprocessError) as exc:
+        log(syslog.LOG_ERR, "Unable to leave stale syncweb folder %s: %s" % (folder, exc))
+        return False
+
+    if result.returncode != 0:
+        diagnostics = (result.stderr or result.stdout or '').strip()
+        if diagnostics:
+            diagnostics = ": " + diagnostics
+        log(syslog.LOG_ERR, "Unable to leave stale syncweb folder %s%s" % (folder, diagnostics))
+        return False
+
+    try:
+        os.remove(marker_path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log(syslog.LOG_ERR, "Unable to remove syncweb cleanup marker %s: %s" % (marker_path, exc))
+        return False
+    return True
+
+
+def recover_syncweb_cleanup_markers():
+    for marker_path in glob('/run/iiab/syncweb-fetch-*.folder'):
+        cleanup_syncweb_folder(marker_path)
+
+
+def remove_syncweb_spec(job_info):
+    if job_info.get('cmd') != 'SYNCWEB-FETCH-CONTENT':
+        return
+    try:
+        command_args = shlex.split(job_info.get('job_command', ''))
+        spec_path = command_args[command_args.index('--spec-file') + 1]
+    except (IndexError, ValueError):
+        log(syslog.LOG_ERR, "Unable to find syncweb job spec for cancelled job.")
+        return
+    spec_name = os.path.basename(spec_path)
+    if (
+        os.path.dirname(spec_path) != '/run/iiab'
+        or not spec_name.startswith('syncweb-fetch-')
+        or not spec_name.endswith('.json')
+    ):
+        log(syslog.LOG_ERR, "Refusing to remove unexpected syncweb job spec path: %s" % spec_path)
+        return
+    try:
+        os.remove(spec_path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log(syslog.LOG_ERR, "Unable to remove cancelled syncweb job spec: %s" % exc)
+
+
 def remove_wip(job_info):
+    with syncweb_wip_lock:
+        _remove_wip(job_info)
+
+def _remove_wip(job_info):
     global zims_wip
     global oer2go_wip
     global maps_wip
@@ -546,6 +816,11 @@ def remove_wip(job_info):
         oer2go_wip.pop(job_info['cmd_args']['moddir'], None)
     elif job_info['cmd'] in {"INST-OSM-VECT-SET"}:
         maps_wip.pop(job_info['cmd_args']['osm_vect_id'], None)
+    elif job_info['cmd'] == "SYNCWEB-FETCH-CONTENT":
+        for zim_id in job_info['cmd_args'].get('zim_ids', []):
+            zims_wip.pop(zim_id, None)
+        for mod_id in job_info['cmd_args'].get('module_ids', []):
+            oer2go_wip.pop(oer2go_moddir(mod_id), None)
 
 def start_job(job_id, job_info, status='STARTED'):
     global running_job_count
@@ -560,8 +835,16 @@ def start_job(job_id, job_info, status='STARTED'):
         args = shlex.split(cmdsrv_lower_job_priority_str + job_info['job_command'])
     else:
         args = shlex.split(job_info['job_command'])
-    job_info['subproc'] = subprocess.Popen(args, stdout=job_info['file'], stderr=subprocess.STDOUT)
+    job_info['subproc'] = subprocess.Popen(
+        args,
+        stdout=job_info['file'],
+        stderr=subprocess.STDOUT,
+        # The fetch helper launches syncweb as a child; cancel both together.
+        start_new_session=(job_info['cmd'] == 'SYNCWEB-FETCH-CONTENT'),
+    )
     job_info['job_pid'] = job_info['subproc'].pid
+    if job_info['cmd'] == 'SYNCWEB-FETCH-CONTENT':
+        job_info['process_group'] = job_info['job_pid']
     job_info['status'] = status
     job_info['status_datetime'] = str(datetime.now())
     job_info['job_output'] = ""
@@ -585,6 +868,18 @@ def start_job(job_id, job_info, status='STARTED'):
 
     return (job_info)
 
+def signal_job_process(pid, cmd, sig, process_group=None):
+    try:
+        if cmd == 'SYNCWEB-FETCH-CONTENT':
+            if process_group is None:
+                process_group = os.getpgid(pid)
+            if process_group == pid:
+                os.killpg(process_group, sig)
+                return
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
 def end_job(job_id, job_info, status): # modify to use tail of job_output
 
     global prereq_jobs
@@ -592,6 +887,7 @@ def end_job(job_id, job_info, status): # modify to use tail of job_output
     global ansible_running_flag
     global running_job_count
 
+    remove_syncweb_spec(job_info)
     jobs_running[job_id]['file'].close()
 
     # load output from tmp file
@@ -647,6 +943,7 @@ def end_job(job_id, job_info, status): # modify to use tail of job_output
 def cancel_req_job(job_id, job_info):
     global active_commands
 
+    remove_syncweb_spec(job_info)
     job_info['output_file'] = None
     job_info['file'] = None
     job_info['subproc'] = None
@@ -767,6 +1064,7 @@ def cmd_handler(cmd_msg):
         "GET-PRESET-LIST": {"funct": get_preset_list, "inet_req": False},
         "INST-PRESETS": {"funct": install_presets, "inet_req": True},
         "INST-ZIMS": {"funct": install_zims, "inet_req": True},
+        "SYNCWEB-FETCH-CONTENT": {"funct": syncweb_fetch_content, "inet_req": False},
         "GET-UPGRADEABLE-ZIMS": {"funct": get_upgradeable_zims, "inet_req": False},
         "UPGRADE-ZIMS": {"funct": upgrade_zims, "inet_req": True},
         "COPY-ZIMS": {"funct": copy_zims, "inet_req": False},
@@ -808,8 +1106,9 @@ def cmd_handler(cmd_msg):
     if parse_failed:
         return cmd_malformed(cmd_info['cmd'])
 
-    cmd_info['cmd_msg'] = cmd_msg
     cmd = cmd_info['cmd']
+
+    cmd_info['cmd_msg'] = cmd_msg
 
     display_cmd_msg = cmd_msg
     if cmd in SENSITIVE_COMMANDS:
@@ -848,6 +1147,7 @@ def cmd_handler(cmd_msg):
                 if not is_internet_avail():
                     resp = cmd_error(cmd, msg='Internet is Required for this Command, but Not Available.')
                     return resp
+
             try:
                 resp = avail_cmds[cmd]["funct"](cmd_info)
             except:
@@ -857,6 +1157,92 @@ def cmd_handler(cmd_msg):
             log(syslog.LOG_ERR, "Error: Unknown Command %s." % cmd)
             resp = '{"Error": "Unknown Command"}'
     return (resp)
+
+def syncweb_fetch_content(cmd_info):
+    if 'cmd_args' not in cmd_info:
+        return cmd_malformed(cmd_info['cmd'])
+
+    # Gate on the same install flag the console uses; the icon is hidden when
+    # syncweb_install is false, but the command must reject a direct request too.
+    if not syncweb_installed:
+        return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='syncweb is not installed on this IIAB.')
+    if not syncweb_enabled:
+        return cmd_error(
+            cmd='SYNCWEB-FETCH-CONTENT',
+            msg='syncweb is installed but its service is disabled.',
+        )
+
+    args = cmd_info['cmd_args']
+    ticket = args.get('ticket')
+    if ticket is None or ticket == '':
+        ticket = syncweb_peer_ticket
+    zim_ids = args.get('zim_ids', [])
+    module_ids = args.get('module_ids', [])
+
+    if not isinstance(ticket, str) or not ticket.strip() or len(ticket) > 4096:
+        return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='A valid syncweb ticket is required.')
+    if not isinstance(zim_ids, list) or not isinstance(module_ids, list):
+        return cmd_malformed(cmd_info['cmd'])
+    if len(zim_ids) + len(module_ids) == 0:
+        return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='No content was selected.')
+    if len(zim_ids) + len(module_ids) > 100:
+        return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Too many content items selected.')
+
+    zims = []
+    for zim_id in zim_ids:
+        if not isinstance(zim_id, str) or zim_id not in kiwix_catalog:
+            return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='ZIM ID not found in catalog.')
+        file_ref = kiwix_catalog[zim_id].get('file_ref')
+        if not isinstance(file_ref, str) or not file_ref or file_ref in ('.', '..') or os.path.basename(file_ref) != file_ref:
+            return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Invalid ZIM file reference.')
+        zims.append({'id': zim_id, 'file_ref': file_ref})
+
+    modules = []
+    for module_id in module_ids:
+        if not isinstance(module_id, str) or module_id not in oer2go_catalog:
+            return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Module ID not found in catalog.')
+        moddir = oer2go_catalog[module_id].get('moddir', module_id)
+        if not isinstance(moddir, str) or not moddir or moddir in ('.', '..') or os.path.basename(moddir) != moddir:
+            return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Invalid module directory.')
+        modules.append({'id': module_id, 'moddir': moddir})
+
+    if not isinstance(syncweb_binary, str) or not os.path.isfile(syncweb_binary):
+        return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='syncweb binary is not available at ' + str(syncweb_binary))
+
+    ticket = ticket.strip()
+    spec = {
+        'ticket': ticket,
+        'zims': zims,
+        'modules': modules,
+        'zim_content_dir': zim_content_dir,
+        'zim_working_dir': zim_working_dir,
+        'modules_dir': modules_dir,
+        'rachel_working_dir': rachel_working_dir,
+    }
+
+    with syncweb_wip_lock:
+        # Check and reserve under one lock so this cannot race an install or
+        # another fetch of the same item.
+        for zim_id in zim_ids:
+            if zim_id in zims_wip:
+                return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='ZIM already queued or in progress: ' + zim_id)
+        for module_id, moddir in ((m['id'], m['moddir']) for m in modules):
+            if module_id in oer2go_wip or moddir in oer2go_wip:
+                return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Module already queued or in progress: ' + module_id)
+
+        try:
+            spec_path = write_syncweb_spec(cmd_info['cmd_rowid'], spec)
+        except (OSError, TypeError, ValueError) as exc:
+            return cmd_error(cmd='SYNCWEB-FETCH-CONTENT', msg='Unable to prepare syncweb job: ' + str(exc))
+
+        cmd_info['cmd_args']['ticket'] = ticket
+        cmd_info['syncweb_spec'] = spec
+        job_command = 'scripts/iiab-syncweb-fetch.py --spec-file ' + shlex.quote(spec_path)
+        job_command += ' --binary ' + shlex.quote(syncweb_binary)
+        job_command += ' --owner ' + shlex.quote(syncweb_user)
+        job_command += ' --data-dir ' + shlex.quote(syncweb_data_dir)
+        job_command += ' --staging-dir ' + shlex.quote(syncweb_staging_dir)
+        return request_job(cmd_info=cmd_info, job_command=job_command)
 
 # Helper functions
 def parse_cmd_msg(cmd_msg):
@@ -2233,9 +2619,11 @@ def run_ansible_roles(cmd_info):
             continue # for now skip unknown roles
         install = effective_vars[role + '_install']
         installed = iiab_roles_status[role]['installed']
-        enable = effective_vars[role + '_enabled']
         # enabled = iiab_roles_status[role]['enabled'] # some services show enabled-runtime
         enabled = iiab_roles_status[role]['active']
+        # roles whose <role>_enabled flag is undefined (e.g. a role shipped by
+        # the admin console) fall back to the current service state
+        enable = effective_vars.get(role + '_enabled', enabled)
         if install == installed and enable == enabled:
             continue
         if role in adm.CONST.iiab_roles_renamed:
@@ -3425,12 +3813,23 @@ def request_one_job(cmd_info, job_command, cmd_step_no, depend_on_job_id, has_de
     job_info['job_command'] = job_command
     job_info['status'] = 'SCHEDULED'
     job_info['status_datetime'] = str(datetime.now())
+    job_info['syncweb_spec'] = cmd_info.get('syncweb_spec')
 
     opt_args = {}
     if 'extra_vars' in job_info:
         opt_args ['extra_vars'] = job_info['extra_vars']
     if 'service_required' in job_info:
         opt_args ['service_required'] = job_info['service_required']
+    if job_info['cmd'] == 'SYNCWEB-FETCH-CONTENT':
+        # Persist the complete spec in the root-only job database so a reboot
+        # can recreate the volatile runtime file.
+        opt_args['syncweb_wip'] = {
+            'ticket': job_info['cmd_args'].get('ticket', ''),
+            'zim_ids': list(job_info['cmd_args'].get('zim_ids', [])),
+            'module_ids': list(job_info['cmd_args'].get('module_ids', [])),
+        }
+        if isinstance(job_info['syncweb_spec'], dict):
+            opt_args['syncweb_spec'] = job_info['syncweb_spec']
 
     opt_args_json = json.dumps(opt_args)
 
@@ -3778,6 +4177,8 @@ def init():
 
     # Read application variables from config files
     app_config()
+    if syncweb_installed and syncweb_enabled:
+        recover_syncweb_cleanup_markers()
 
     # Read vars from ansible file into global vars
     read_iiab_default_vars()
@@ -4014,7 +4415,8 @@ def get_incomplete_jobs():
                 try:
                     tprint ("Removing pid %s if still running" % job_pid)
                     log(syslog.LOG_INFO, "Removing pid %s if still running" % job_pid)
-                    os.kill(job_pid, signal.SIGKILL)
+                    command_name = cmd_msg.split(' ', 1)[0]
+                    signal_job_process(job_pid, command_name, signal.SIGKILL)
                 except OSError:
                     pass
             # rm job_output file
@@ -4025,7 +4427,7 @@ def get_incomplete_jobs():
                 pass
 
         parse_failed, job_info = parse_cmd_msg(cmd_msg)
-        if parse_failed:
+        if parse_failed and job_info['cmd'] not in SENSITIVE_COMMANDS:
             log(syslog.LOG_ERR, "Error: Unexpected error in when restarting Command %s." % job_info['cmd'])
 
         job_info['cmd_rowid'] = cmd_rowid
@@ -4045,6 +4447,9 @@ def get_incomplete_jobs():
             job_info['extra_vars'] = opt_args['extra_vars']
         if 'service_required' in opt_args:
             job_info['service_required'] = opt_args['service_required']
+        if job_info['cmd'] == 'SYNCWEB-FETCH-CONTENT':
+            job_info['cmd_args'] = syncweb_wip_args(job_info, opt_args)
+            restore_syncweb_spec(job_info, opt_args)
 
         # only restart if we haven't already seen this command
         # we assume that we can always use the highest numbered job for a given command
@@ -4052,6 +4457,8 @@ def get_incomplete_jobs():
         if job_command != last_command:
             if job_status == 'SCHEDULED':
                 jobs_requested[job_id] = job_info
+                if cmd_step_no == 1:
+                    add_wip(job_info)
                 if has_dependent == "Y":
                     prereq_jobs[job_id] = {'status': 'SCHEDULED'}
             else:
@@ -4073,6 +4480,7 @@ def get_incomplete_jobs():
     conn.close()
 
     for job_id in jobs_to_cancel:
+        remove_syncweb_spec(jobs_to_cancel[job_id])
         upd_job_cancelled(job_id)
         if jobs_to_cancel[job_id]['has_dependent'] == "Y":
             prereq_jobs[job_id] = {'status': 'CANCELLED'}
@@ -4132,6 +4540,13 @@ def app_config():
     global maps_sat_base
     global maps_download_src
     global modules_dir
+    global syncweb_binary
+    global syncweb_user
+    global syncweb_data_dir
+    global syncweb_staging_dir
+    global syncweb_peer_ticket
+    global syncweb_installed
+    global syncweb_enabled
     global js_menu_dir
     global ansible_playbook_program
     global ansible_program
@@ -4179,6 +4594,13 @@ def app_config():
     rachel_downloads_dir = conf['rachel_downloads_dir']
     rachel_working_dir = conf['rachel_working_dir']
     modules_dir = conf['modules_dir']
+    syncweb_binary = conf.get('syncweb_binary', '/usr/local/bin/syncweb')
+    syncweb_user = conf.get('syncweb_user', 'syncweb')
+    syncweb_data_dir = conf.get('syncweb_data_dir', '/var/lib/syncweb/data')
+    syncweb_staging_dir = conf.get('syncweb_staging_dir', '/var/lib/syncweb/staging')
+    syncweb_peer_ticket = conf.get('syncweb_peer_ticket', '')
+    syncweb_installed = conf.get('syncweb_installed', False)
+    syncweb_enabled = conf.get('syncweb_enabled', True)
     maps_downloads_dir = conf['maps_downloads_dir']
     maps_working_dir = conf['maps_working_dir']
     adm_maps_catalog_file  = conf['adm_maps_catalog_file']

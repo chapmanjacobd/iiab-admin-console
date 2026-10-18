@@ -41,6 +41,9 @@ valid_tokens = []
 # these commands can not be issued from the front end
 internal_commands = ['AUTHENTICATE']
 
+# keep credentials out of the uwsgi log; mirrors SENSITIVE_COMMANDS in iiab-cmdsrv3.py
+sensitive_commands = ['CHGPW', 'AUTHENTICATE', 'CTL-HOTSPOT', 'SET-WIFI-CONNECTION-PARAMS', 'CTL-TAILSCALE']
+
 # init() at bottom
 
 alert_param = ',"Alert": "True"}' # global for cmd response
@@ -238,7 +241,10 @@ def handle_cmd(req_uri, environ):
             if cmd_verb in internal_commands: # don't allow from front end
                 response_body = '{"Error": "Invalid command."' + alert_param
             else:
-                print('Handling ' + cmd)
+                if cmd_verb in sensitive_commands:
+                    print('Handling ' + cmd_verb + ' ***')
+                else:
+                    print('Handling ' + cmd)
                 response_body = send_command(cmd, start_ms)
         else:
             response_body = '{"Error": "CMDSRV has started but is not ready."' + alert_param
