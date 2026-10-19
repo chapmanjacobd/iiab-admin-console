@@ -55,6 +55,44 @@ def test_wip_args_without_metadata_does_not_raise(cmdsrv):
     assert recovered['module_ids'] == []
 
 
+def test_syncweb_fetch_redaction_preserves_deduplication_key(cmdsrv):
+    args = {
+        'ticket': 'secret-ticket',
+        'zim_ids': ['zim-a'],
+        'module_ids': ['mod-a'],
+    }
+    command = 'SYNCWEB-FETCH-CONTENT ' + json.dumps(args)
+
+    assert 'SYNCWEB-FETCH-CONTENT' in cmdsrv.SENSITIVE_COMMANDS
+    assert cmdsrv.redact_command_message(command) == 'SYNCWEB-FETCH-CONTENT ***'
+
+    key = cmdsrv.command_dedup_key('SYNCWEB-FETCH-CONTENT', args, command)
+    reordered_key = cmdsrv.command_dedup_key(
+        'SYNCWEB-FETCH-CONTENT',
+        {'module_ids': ['mod-a'], 'zim_ids': ['zim-a'], 'ticket': 'secret-ticket'},
+        command,
+    )
+    assert key == reordered_key
+    assert key.startswith('SYNCWEB-FETCH-CONTENT:')
+    assert 'secret-ticket' not in key
+    assert 'secret-ticket' not in cmdsrv.redact_command_message(command)
+
+
+def test_request_job_keeps_private_deduplication_key(cmdsrv, monkeypatch):
+    monkeypatch.setattr(cmdsrv, 'active_commands', {})
+    monkeypatch.setattr(cmdsrv, 'request_one_job', lambda *args, **kwargs: 42)
+
+    cmd_info = {
+        'cmd_rowid': 17,
+        'cmd_msg': 'SYNCWEB-FETCH-CONTENT ***',
+        'cmd_dedup_key': 'private-dedup-key',
+    }
+    response = cmdsrv.request_job(cmd_info, 'fetch-content')
+
+    assert response == '{"Success": "Job  42 Scheduled."}'
+    assert cmdsrv.active_commands == {17: 'private-dedup-key'}
+
+
 def test_oer2go_moddir_uses_catalog_then_falls_back(cmdsrv):
     original = cmdsrv.oer2go_catalog
     try:

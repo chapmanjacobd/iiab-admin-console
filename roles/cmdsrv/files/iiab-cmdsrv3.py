@@ -145,7 +145,7 @@ prereq_jobs = {}
 jobs_running = {}
 running_job_count = 0
 
-SENSITIVE_COMMANDS = ["CHGPW", "AUTHENTICATE", "CTL-HOTSPOT", "SET-WIFI-CONNECTION-PARAMS", "CTL-TAILSCALE"]
+SENSITIVE_COMMANDS = ["CHGPW", "AUTHENTICATE", "CTL-HOTSPOT", "SET-WIFI-CONNECTION-PARAMS", "CTL-TAILSCALE", "SYNCWEB-FETCH-CONTENT"]
 NO_LOG_COMMANDS = ["AUTHENTICATE"]
 ANSIBLE_COMMANDS = ["RUN-ANSIBLE", "RESET-NETWORK", "RUN-ANSIBLE-ROLES"]
 FULL_LOG_COMMANDS = ["RUN-ANSIBLE", "RESET-NETWORK", "RUN-ANSIBLE-ROLES"]
@@ -991,7 +991,7 @@ def cmd_proc_thread(worker_data_url, worker_control_url, context=None):
         if data_socket in sockets:
             ident, cmd_msg = data_socket.recv_multipart()
             cmd_msg = cmd_msg.decode("utf8")
-            tprint('sending message server received from client to worker %s id %s' % (cmd_msg, ident))
+            tprint('sending message server received from client to worker %s id %s' % (redact_command_message(cmd_msg), ident))
             cmd_resp = cmd_handler(cmd_msg)
             #print cmd_resp
             # 8/23/2015 added .encode() to response as list_library was giving unicode errors
@@ -1110,20 +1110,26 @@ def cmd_handler(cmd_msg):
 
     cmd_info['cmd_msg'] = cmd_msg
 
-    display_cmd_msg = cmd_msg
-    if cmd in SENSITIVE_COMMANDS:
-        display_cmd_msg = cmd + ' ***'
+    display_cmd_msg = redact_command_message(cmd_msg)
+    cmd_info['cmd_dedup_key'] = command_dedup_key(cmd, cmd_info['cmd_args'], cmd_msg)
 
     # log the command
     if cmd not in NO_LOG_COMMANDS:
         log(syslog.LOG_INFO, 'Received CMD Message %s.' % display_cmd_msg )
 
     # Check for Duplicate Command
-    dup_cmd = next((job_id for job_id, active_cmd_msg in list(active_commands.items()) if active_cmd_msg == cmd_msg), None)
+    dup_cmd = next(
+        (
+            job_id
+            for job_id, active_cmd_key in list(active_commands.items())
+            if active_cmd_key == cmd_info['cmd_dedup_key']
+        ),
+        None,
+    )
     if dup_cmd != None:
         strip_cmd_msg = cmd_msg.replace('\"','')
         if cmd in SENSITIVE_COMMANDS:
-            strip_cmd_msg = cmd + ' ***'
+            strip_cmd_msg = display_cmd_msg
         log(syslog.LOG_ERR, "Error: %s duplicates an Active Command." % strip_cmd_msg)
         resp = '{"Error": "' + strip_cmd_msg + ' duplicates an Active Command"}'
         return (resp)
@@ -1259,6 +1265,30 @@ def parse_cmd_msg(cmd_msg):
         except:
             parse_failed = True
     return parse_failed, cmd_dict
+
+def redact_command_message(cmd_msg):
+    """Return a log- and UI-safe representation of a command message."""
+    cmd = cmd_msg.split(' ', 1)[0]
+    if cmd in SENSITIVE_COMMANDS:
+        return cmd + ' ***'
+    return cmd_msg
+
+def command_dedup_key(cmd, cmd_args, cmd_msg):
+    """Build a stable private key for commands whose displayed text is redacted."""
+    if cmd != 'SYNCWEB-FETCH-CONTENT':
+        return cmd_msg
+    if not isinstance(cmd_args, dict):
+        return cmd + ':' + hashlib.sha256(cmd_msg.encode()).hexdigest()
+    canonical_args = json.dumps(
+        {
+            'ticket': cmd_args.get('ticket', ''),
+            'zim_ids': cmd_args.get('zim_ids', []),
+            'module_ids': cmd_args.get('module_ids', []),
+        },
+        sort_keys=True,
+        separators=(',', ':'),
+    ).encode()
+    return 'SYNCWEB-FETCH-CONTENT:' + hashlib.sha256(canonical_args).hexdigest()
 
 def is_internet_avail():
     # return is_url_avail("www.google.com")
@@ -3789,7 +3819,7 @@ def isStrongPassword(password):
 def request_job(cmd_info, job_command, cmd_step_no=1, depend_on_job_id=-1, has_dependent="N"):
     global jobs_requested
 
-    active_commands[cmd_info['cmd_rowid']] = cmd_info['cmd_msg']
+    active_commands[cmd_info['cmd_rowid']] = cmd_info.get('cmd_dedup_key', cmd_info['cmd_msg'])
     job_id = request_one_job(cmd_info, job_command, cmd_step_no, depend_on_job_id, has_dependent)
 
     return ('{"Success": "Job  ' + str(job_id) + ' Scheduled."}')
@@ -3828,6 +3858,10 @@ def request_one_job(cmd_info, job_command, cmd_step_no, depend_on_job_id, has_de
             'zim_ids': list(job_info['cmd_args'].get('zim_ids', [])),
             'module_ids': list(job_info['cmd_args'].get('module_ids', [])),
         }
+        opt_args['syncweb_dedup_key'] = cmd_info.get(
+            'cmd_dedup_key',
+            command_dedup_key(job_info['cmd'], job_info['cmd_args'], cmd_info.get('cmd_msg', job_info['cmd'])),
+        )
         if isinstance(job_info['syncweb_spec'], dict):
             opt_args['syncweb_spec'] = job_info['syncweb_spec']
 
@@ -4449,6 +4483,13 @@ def get_incomplete_jobs():
             job_info['service_required'] = opt_args['service_required']
         if job_info['cmd'] == 'SYNCWEB-FETCH-CONTENT':
             job_info['cmd_args'] = syncweb_wip_args(job_info, opt_args)
+            job_info['cmd_dedup_key'] = opt_args.get('syncweb_dedup_key')
+            if not isinstance(job_info['cmd_dedup_key'], str):
+                job_info['cmd_dedup_key'] = command_dedup_key(
+                    job_info['cmd'],
+                    job_info['cmd_args'],
+                    cmd_msg,
+                )
             restore_syncweb_spec(job_info, opt_args)
 
         # only restart if we haven't already seen this command
@@ -4464,7 +4505,7 @@ def get_incomplete_jobs():
             else:
                 jobs_to_restart[job_id] = job_info
             # Add to active_commands
-            active_commands[cmd_rowid] = cmd_msg
+            active_commands[cmd_rowid] = job_info.get('cmd_dedup_key', cmd_msg)
             if job_info['cmd'] == "INST-ZIMS":
                 id = job_info['cmd_args']['zim_id']
                 if id not in kiwix_catalog:
